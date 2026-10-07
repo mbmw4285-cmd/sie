@@ -1,0 +1,11 @@
+require('dotenv').config();
+const express=require('express'); const path=require('path'); const Groq=require('groq-sdk');
+const app=express(), PORT=process.env.PORT||3000, groq=new Groq({apiKey:process.env.GROQ_API_KEY});
+const ALLOWED=new Set(['PLASTIC','PAPER','METAL','ORGANIC']);
+app.use(express.json({limit:'10mb'})); app.use(express.static(path.join(__dirname,'public')));
+app.post('/api/classify',async(req,res)=>{try{if(!process.env.GROQ_API_KEY)return res.status(500).json({error:'GROQ_API_KEY is not configured in .env'}); const {image}=req.body;if(!image?.startsWith('data:image/'))return res.status(400).json({error:'Camera image required.'});
+const c=await groq.chat.completions.create({model:'qwen/qwen3.8-27b',temperature:0,max_completion_tokens:250,response_format:{type:'json_object'},messages:[{role:'user',content:[{type:'text',text:'You are VERDIX waste-sorting vision AI. Analyze the single main object. Choose exactly one: PLASTIC, PAPER, METAL, ORGANIC, or UNKNOWN. Ignore background. Return only JSON: {"material":"PLASTIC|PAPER|METAL|ORGANIC|UNKNOWN","confidence":0-100,"item":"short name","reason":"short reason"}'},{type:'image_url',image_url:{url:image}}]}]});
+let r;try{r=JSON.parse(c.choices[0].message.content)}catch{return res.status(502).json({error:'AI returned invalid JSON.'})} if(!ALLOWED.has(r.material))r.material='UNKNOWN';r.confidence=Math.max(0,Math.min(100,Number(r.confidence)||0));res.json(r);
+}catch(e){console.error(e);res.status(500).json({error:e.message||'Groq classification failed.'})}});
+app.post('/api/sort',async(req,res)=>{const material=String(req.body.material||'').toUpperCase();if(!ALLOWED.has(material))return res.status(400).json({error:'Invalid material.'});const base=process.env.ESP32_URL;if(!base)return res.json({ok:true,simulated:true,message:`Sorting ${material} (ESP32_URL not configured).`});try{const r=await fetch(base.replace(/\/$/,'')+'/sort',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({material})});res.status(r.ok?200:502).json({ok:r.ok,esp32:await r.text()})}catch(e){res.status(502).json({error:'Could not reach ESP32.',details:e.message})}});
+app.get('/api/health',(req,res)=>res.json({ok:true,groq:!!process.env.GROQ_API_KEY})); app.listen(PORT,()=>console.log(`VERDIX: http://localhost:${PORT}`));
